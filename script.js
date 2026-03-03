@@ -15,35 +15,42 @@ document.getElementById('excelFile').addEventListener('change', function (e) {
 
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
-        console.log("===== RAW DATA =====");
+        console.log("===== RAW EXCEL DATA =====");
         console.log(jsonData);
+
+        // =========================
+        // CLEAN & NORMALIZE DATA
+        // =========================
 
         const cleanedData = jsonData.map(row => {
 
-            // Ambil kolom sesuai header Excel kamu
             const material = row["Material"];
             const description = row["Material Description"];
-            const movement = row["Movement"];
+            const movement = row["Movement Type"];
             const unit = row["Unit of Entry"];
 
-            // --- NORMALISASI QTY ---
-            let qtyRaw = row["Qty in Un."].toString();
-            qtyRaw = qtyRaw.replace(/\./g, "").replace(",", ".");
-            const qty = parseFloat(qtyRaw);
+            const qty = Number(row["Qty in Un. of Entry"]);
+            let text = Number(row["Text"] || 0);
 
-            // --- NORMALISASI TEXT (LJR) ---
-            let textRaw = row["Text"].toString().trim();
-
-            if (textRaw === "") textRaw = "0";
-
-            if (isNaN(textRaw)) {
-                alert("Error: Kolom Text harus angka saja.");
-                throw new Error("Invalid Text Value");
+            // VALIDATION
+            if (!material) {
+                throw new Error("Material kosong ditemukan.");
             }
 
-            let text = parseFloat(textRaw);
+            if (!movement) {
+                throw new Error("Movement Type kosong ditemukan.");
+            }
 
-            // 🔥 FIX: Ikuti tanda dari Qty
+            if (isNaN(qty)) {
+                throw new Error("Qty bukan angka pada material: " + material);
+            }
+
+            if (isNaN(text)) {
+                throw new Error("Kolom Text harus angka pada material: " + material);
+            }
+
+            // 🔥 GLOBAL RULE:
+            // Jika unit = KG maka tanda LJR ikut tanda Qty
             if (unit === "KG") {
                 text = Math.abs(text) * Math.sign(qty);
             }
