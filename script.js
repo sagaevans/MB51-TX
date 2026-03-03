@@ -18,46 +18,44 @@ document.getElementById('excelFile').addEventListener('change', function (e) {
         console.log("===== RAW EXCEL DATA =====");
         console.log(jsonData);
 
-        const cleanedData = jsonData.map(row => {
+        const cleanedData = jsonData
+            .filter(row => row["Material"] && row["Movement Type"]) // 🔥 skip baris kosong
+            .map(row => {
 
-            const material = row["Material"] || "";
-            const description = row["Material Description"] || "";
-            const movement = row["Movement Type"] || "";
-            const unit = row["Unit of Entry"] || "";
+                const material = row["Material"];
+                const description = row["Material Description"] || "";
+                const movement = row["Movement Type"];
+                const unit = row["Unit of Entry"] || "";
 
-            const qtyRaw = row["Qty in Un. of Entry"];
-            const textRaw = row["Text"];
+                const qty = Number(row["Qty in Un. of Entry"] || 0);
+                let text = Number(row["Text"] || 0);
 
-            const qty = Number(qtyRaw || 0);
-            let text = Number(textRaw || 0);
+                if (isNaN(qty)) {
+                    console.warn("Qty bukan angka pada material:", material);
+                    return null;
+                }
 
-            if (!material || !movement) {
-                throw new Error("Material atau Movement kosong ditemukan.");
-            }
+                if (isNaN(text)) {
+                    console.warn("Text bukan angka pada material:", material);
+                    return null;
+                }
 
-            if (isNaN(qty)) {
-                throw new Error("Qty bukan angka pada material: " + material);
-            }
+                // 🔥 TEXT IKUT TANDA QTY
+                if (unit === "KG") {
+                    text = Math.abs(text) * Math.sign(qty);
+                }
 
-            if (isNaN(text)) {
-                throw new Error("Text bukan angka pada material: " + material);
-            }
+                return {
+                    material,
+                    description,
+                    movement,
+                    qty,
+                    unit,
+                    text
+                };
 
-            // 🔥 TEXT IKUT TANDA QTY
-            if (unit === "KG") {
-                text = Math.abs(text) * Math.sign(qty);
-            }
-
-            return {
-                material,
-                description,
-                movement,
-                qty,
-                unit,
-                text
-            };
-
-        });
+            })
+            .filter(item => item !== null); // buang null
 
         console.log("===== CLEANED DATA =====");
         console.log(cleanedData);
