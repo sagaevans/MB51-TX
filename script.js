@@ -18,27 +18,21 @@ document.getElementById('excelFile').addEventListener('change', function (e) {
         console.log("===== RAW EXCEL DATA =====");
         console.log(jsonData);
 
-        // =========================
-        // CLEAN & NORMALIZE DATA
-        // =========================
-
         const cleanedData = jsonData.map(row => {
 
-            const material = row["Material"];
-            const description = row["Material Description"];
-            const movement = row["Movement Type"];
-            const unit = row["Unit of Entry"];
+            const material = row["Material"] || "";
+            const description = row["Material Description"] || "";
+            const movement = row["Movement Type"] || "";
+            const unit = row["Unit of Entry"] || "";
 
-            const qty = Number(row["Qty in Un. of Entry"]);
-            let text = Number(row["Text"] || 0);
+            const qtyRaw = row["Qty in Un. of Entry"];
+            const textRaw = row["Text"];
 
-            // VALIDATION
-            if (!material) {
-                throw new Error("Material kosong ditemukan.");
-            }
+            const qty = Number(qtyRaw || 0);
+            let text = Number(textRaw || 0);
 
-            if (!movement) {
-                throw new Error("Movement Type kosong ditemukan.");
+            if (!material || !movement) {
+                throw new Error("Material atau Movement kosong ditemukan.");
             }
 
             if (isNaN(qty)) {
@@ -46,11 +40,10 @@ document.getElementById('excelFile').addEventListener('change', function (e) {
             }
 
             if (isNaN(text)) {
-                throw new Error("Kolom Text harus angka pada material: " + material);
+                throw new Error("Text bukan angka pada material: " + material);
             }
 
-            // 🔥 GLOBAL RULE:
-            // Jika unit = KG maka tanda LJR ikut tanda Qty
+            // 🔥 TEXT IKUT TANDA QTY
             if (unit === "KG") {
                 text = Math.abs(text) * Math.sign(qty);
             }
