@@ -18,6 +18,31 @@
         .badge-rev { background: #888; }
         #tableWrap { display: none; }
         .zero { color: #aaa; }
+        /* Header movement group */
+        tr.mvmt-header td {
+            background: #e8e8e8;
+            font-weight: bold;
+            color: #222;
+            border-top: 2px solid #aaa;
+            padding: 4px 10px;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+        }
+        /* Subtotal row */
+        tr.subtotal td {
+            background: #f9f9e8;
+            font-weight: bold;
+            border-top: 1px solid #ccc;
+            border-bottom: 2px solid #aaa;
+            color: #444;
+        }
+        /* Grand total row */
+        tr.grandtotal td {
+            background: #333;
+            color: #fff;
+            font-weight: bold;
+            border-top: 3px solid #111;
+        }
     </style>
 </head>
 <body>
@@ -178,10 +203,8 @@
                     result.push({ ...g, totalQty: qtyNet, totalLJR: ljrNet });
                 }
 
-                // Sort: material → groupKey
-                result.sort((a, b) =>
-                    a.material.localeCompare(b.material) || a.groupKey - b.groupKey
-                );
+                // Sort: groupKey saja
+                result.sort((a, b) => a.groupKey - b.groupKey);
 
                 console.log("===== AGGREGATED RESULT =====", result);
 
@@ -201,40 +224,95 @@
         const tbody = document.getElementById("tableBody");
         tbody.innerHTML = "";
 
+        // Kelompokkan per groupKey, urutan sudah sesuai sort
+        const byGroup = new Map();
         for (const row of result) {
-            const tr = document.createElement("tr");
-
-            const revLabel = row.hasReverse
-                ? `<span class="badge badge-rev">${getReverseLabel(row.groupKey)}</span>`
-                : `<span style="color:#bbb">—</span>`;
-
-            // LJR hanya tampil jika unit KG (text = LJR), untuk non-KG tampilkan dash
-            const ljrCell = row.unit === "KG"
-                ? `<td class="num">${fmt(row.totalLJR, 0)}</td>`
-                : `<td class="num" style="color:#bbb">—</td>`;
-
-            tr.innerHTML = `
-                <td>${row.material}</td>
-                <td>${row.description}</td>
-                <td><span class="badge">${row.groupKey}</span></td>
-                <td>${revLabel}</td>
-                <td class="num">${fmt(row.totalQty)}</td>
-                ${ljrCell}
-            `;
-            tbody.appendChild(tr);
+            if (!byGroup.has(row.groupKey)) byGroup.set(row.groupKey, []);
+            byGroup.get(row.groupKey).push(row);
         }
 
-        // Summary
+        let grandKG  = 0;
+        let grandLJR = 0;
+
+        for (const [groupKey, rows] of byGroup) {
+            const revNum = getReverseLabel(groupKey);
+            const hasAnyReverse = rows.some(r => r.hasReverse);
+
+            // ── Header movement group ──────────────────────────────────────────
+            const headerTr = document.createElement("tr");
+            headerTr.className = "mvmt-header";
+            headerTr.innerHTML = `
+                <td colspan="6">
+                    Movement&nbsp;<span class="badge">${groupKey}</span>
+                    ${hasAnyReverse ? `&nbsp;/&nbsp;<span class="badge badge-rev">${revNum}</span>` : ""}
+                </td>
+            `;
+            tbody.appendChild(headerTr);
+
+            // ── Baris data ─────────────────────────────────────────────────────
+            let subKG  = 0;
+            let subLJR = 0;
+
+            for (const row of rows) {
+                const revLabel = row.hasReverse
+                    ? `<span class="badge badge-rev">${revNum}</span>`
+                    : `<span style="color:#bbb">—</span>`;
+
+                const ljrCell = row.unit === "KG"
+                    ? `<td class="num">${fmt(row.totalLJR, 0)}</td>`
+                    : `<td class="num" style="color:#bbb">—</td>`;
+
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                    <td>${row.material}</td>
+                    <td>${row.description}</td>
+                    <td><span class="badge">${groupKey}</span></td>
+                    <td>${revLabel}</td>
+                    <td class="num">${fmt(row.totalQty)}</td>
+                    ${ljrCell}
+                `;
+                tbody.appendChild(tr);
+
+                subKG  += row.totalQty;
+                subLJR += row.unit === "KG" ? row.totalLJR : 0;
+            }
+
+            grandKG  += subKG;
+            grandLJR += subLJR;
+
+            // ── Subtotal per movement group ────────────────────────────────────
+            const subTr = document.createElement("tr");
+            subTr.className = "subtotal";
+            subTr.innerHTML = `
+                <td colspan="4">Subtotal Movement ${groupKey}</td>
+                <td class="num">${fmt(subKG)}</td>
+                <td class="num">${fmt(subLJR, 0)}</td>
+            `;
+            tbody.appendChild(subTr);
+        }
+
+        // ── Grand Total ────────────────────────────────────────────────────────
+        const gtTr = document.createElement("tr");
+        gtTr.className = "grandtotal";
+        gtTr.innerHTML = `
+            <td colspan="4">GRAND TOTAL</td>
+            <td class="num">${fmt(grandKG)}</td>
+            <td class="num">${fmt(grandLJR, 0)}</td>
+        `;
+        tbody.appendChild(gtTr);
+
+        // ── Summary ────────────────────────────────────────────────────────────
         document.getElementById("summary").style.display = "block";
         document.getElementById("summary").innerHTML = `
             Raw rows: <b>${rawCount}</b> &nbsp;|&nbsp;
             Valid rows: <b>${cleanedCount}</b> &nbsp;|&nbsp;
-            Movement groups tampil: <b>${result.length}</b>
+            Movement groups: <b>${byGroup.size}</b> &nbsp;|&nbsp;
+            Transaksi bersih: <b>${result.length}</b>
         `;
 
         document.getElementById("tableWrap").style.display = "block";
         document.getElementById("status").textContent =
-            `✅ Selesai — ${result.length} transaksi bersih ditampilkan.`;
+            `✅ Selesai — ${result.length} transaksi bersih dalam ${byGroup.size} movement group.`;
     }
     </script>
 </body>
