@@ -1,19 +1,241 @@
 <!DOCTYPE html>
-<html>
+<html lang="id">
 <head>
     <meta charset="UTF-8">
     <title>MB51 Transaction Engine</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        h2 { color: #333; }
+        #uploadArea { margin-bottom: 16px; }
+        #status { color: #555; font-size: 13px; margin: 8px 0; }
+        #summary { background: #fff; border: 1px solid #ccc; padding: 10px; margin-bottom: 12px; font-size: 13px; display: none; }
+        table { border-collapse: collapse; width: 100%; background: #fff; font-size: 13px; }
+        th { background: #333; color: #fff; padding: 6px 10px; text-align: left; }
+        td { padding: 5px 10px; border-bottom: 1px solid #ddd; }
+        tr:hover td { background: #f0f0f0; }
+        .num { text-align: right; }
+        .badge { display: inline-block; background: #555; color: #fff; border-radius: 3px; padding: 1px 6px; font-size: 11px; }
+        .badge-rev { background: #888; }
+        #tableWrap { display: none; }
+        .zero { color: #aaa; }
+    </style>
 </head>
 <body>
+    <h2>📦 MB51 Transaction Engine</h2>
 
-    <h2>Upload MB51 Excel</h2>
-    <input type="file" id="excelFile" accept=".xlsx" />
+    <div id="uploadArea">
+        <input type="file" id="excelFile" accept=".xlsx" />
+    </div>
 
-    <!-- SheetJS Library -->
+    <div id="status">Belum ada file diupload.</div>
+    <div id="summary"></div>
+
+    <div id="tableWrap">
+        <table id="resultTable">
+            <thead>
+                <tr>
+                    <th>Material</th>
+                    <th>Description</th>
+                    <th>Move Group</th>
+                    <th>Reverse</th>
+                    <th class="num">Total KG</th>
+                    <th class="num">Total LJR</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+    </div>
+
+    <!-- SheetJS -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
-    <!-- Our Script -->
-    <script src="script.js"></script>
+    <script>
+    // ─── HELPERS ───────────────────────────────────────────────────────────────
 
+    /**
+     * Parse angka dari string SAP yang pakai koma sebagai desimal
+     * Contoh: "30907,623" → 30907.623 | "-266,508" → -266.508
+     */
+    function parseNum(val) {
+        if (val === null || val === undefined || val === "") return 0;
+        if (typeof val === "number") return val;
+        // Hilangkan titik ribuan, ganti koma desimal → titik
+        const str = String(val).replace(/\./g, "").replace(",", ".");
+        const n = parseFloat(str);
+        return isNaN(n) ? 0 : n;
+    }
+
+    /**
+     * Hitung groupKey dari movement type
+     * Ganjil → movement itu sendiri
+     * Genap  → movement - 1
+     */
+    function getGroupKey(movement) {
+        const m = parseInt(movement);
+        return m % 2 === 0 ? m - 1 : m;
+    }
+
+    /**
+     * Label reverse: jika movement genap → ada reverse
+     */
+    function getReverseLabel(groupKey) {
+        return groupKey + 1;
+    }
+
+    // ─── FORMAT NUMBER ─────────────────────────────────────────────────────────
+    function fmt(n, dec = 3) {
+        return n.toLocaleString("id-ID", {
+            minimumFractionDigits: dec,
+            maximumFractionDigits: dec
+        });
+    }
+
+    // ─── MAIN UPLOAD HANDLER ───────────────────────────────────────────────────
+    document.getElementById("excelFile").addEventListener("change", function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        document.getElementById("status").textContent = "⏳ Membaca file...";
+
+        const reader = new FileReader();
+        reader.onload = function (event) {
+            try {
+                // ── TAHAP 1: Parse Excel ──────────────────────────────────────
+                const data = new Uint8Array(event.target.result);
+                const workbook = XLSX.read(data, { type: "array" });
+                const ws = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+                console.log("===== RAW EXCEL DATA =====", jsonData);
+
+                // ── TAHAP 2: Cleaning & Normalisasi ──────────────────────────
+                const cleaned = [];
+
+                for (const row of jsonData) {
+                    // Skip baris tanpa Material atau Movement Type
+                    const material = String(row["Material"] || "").trim();
+                    const movRaw   = String(row["Movement Type"] || "").trim();
+                    if (!material || !movRaw) continue;
+
+                    // Pastikan movement adalah angka
+                    const movNum = parseInt(movRaw);
+                    if (isNaN(movNum)) continue;
+
+                    const description = String(row["Material Description"] || "").trim();
+                    const unit        = String(row["Unit of Entry"] || "").trim();
+                    let qty           = parseNum(row["Qty in Un. of Entry"]);
+                    let text          = parseNum(row["Text"]);
+
+                    // Skip baris total/rekap (unit kosong & material aneh)
+                    if (!unit) continue;
+
+                    // TEXT ikut tanda QTY untuk unit KG
+                    if (unit === "KG") {
+                        text = Math.abs(text) * Math.sign(qty);
+                    }
+
+                    cleaned.push({ material, description, movement: movNum, qty, unit, text });
+                }
+
+                console.log("===== CLEANED DATA =====", cleaned);
+
+                // ── TAHAP 3: Pairing Engine ───────────────────────────────────
+                // Group by: material + groupKey + unit
+                const groupMap = new Map();
+
+                for (const row of cleaned) {
+                    const groupKey = getGroupKey(row.movement);
+                    const mapKey   = `${row.material}||${groupKey}||${row.unit}`;
+
+                    if (!groupMap.has(mapKey)) {
+                        groupMap.set(mapKey, {
+                            material:    row.material,
+                            description: row.description,
+                            groupKey:    groupKey,
+                            unit:        row.unit,
+                            totalQty:    0,
+                            totalLJR:    0,
+                            hasReverse:  false
+                        });
+                    }
+
+                    const g = groupMap.get(mapKey);
+                    g.totalQty += row.qty;
+                    g.totalLJR += row.text;
+
+                    // Tandai jika ada reverse (movement genap)
+                    if (row.movement % 2 === 0) {
+                        g.hasReverse = true;
+                    }
+                }
+
+                // ── TAHAP 4: Filter Net Zero ──────────────────────────────────
+                const result = [];
+                for (const [, g] of groupMap) {
+                    const qtyNet = Math.round(g.totalQty * 1000) / 1000;
+                    const ljrNet = Math.round(g.totalLJR * 1000) / 1000;
+                    if (qtyNet === 0 && ljrNet === 0) continue;
+                    result.push({ ...g, totalQty: qtyNet, totalLJR: ljrNet });
+                }
+
+                // Sort: material → groupKey
+                result.sort((a, b) =>
+                    a.material.localeCompare(b.material) || a.groupKey - b.groupKey
+                );
+
+                console.log("===== AGGREGATED RESULT =====", result);
+
+                // ── TAHAP 5: Render Dashboard ─────────────────────────────────
+                renderTable(result, cleaned.length, jsonData.length);
+
+            } catch (err) {
+                document.getElementById("status").textContent = "❌ Error: " + err.message;
+                console.error(err);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    // ─── RENDER ────────────────────────────────────────────────────────────────
+    function renderTable(result, cleanedCount, rawCount) {
+        const tbody = document.getElementById("tableBody");
+        tbody.innerHTML = "";
+
+        for (const row of result) {
+            const tr = document.createElement("tr");
+
+            const revLabel = row.hasReverse
+                ? `<span class="badge badge-rev">${getReverseLabel(row.groupKey)}</span>`
+                : `<span style="color:#bbb">—</span>`;
+
+            // LJR hanya tampil jika unit KG (text = LJR), untuk non-KG tampilkan dash
+            const ljrCell = row.unit === "KG"
+                ? `<td class="num">${fmt(row.totalLJR, 0)}</td>`
+                : `<td class="num" style="color:#bbb">—</td>`;
+
+            tr.innerHTML = `
+                <td>${row.material}</td>
+                <td>${row.description}</td>
+                <td><span class="badge">${row.groupKey}</span></td>
+                <td>${revLabel}</td>
+                <td class="num">${fmt(row.totalQty)}</td>
+                ${ljrCell}
+            `;
+            tbody.appendChild(tr);
+        }
+
+        // Summary
+        document.getElementById("summary").style.display = "block";
+        document.getElementById("summary").innerHTML = `
+            Raw rows: <b>${rawCount}</b> &nbsp;|&nbsp;
+            Valid rows: <b>${cleanedCount}</b> &nbsp;|&nbsp;
+            Movement groups tampil: <b>${result.length}</b>
+        `;
+
+        document.getElementById("tableWrap").style.display = "block";
+        document.getElementById("status").textContent =
+            `✅ Selesai — ${result.length} transaksi bersih ditampilkan.`;
+    }
+    </script>
 </body>
 </html>
